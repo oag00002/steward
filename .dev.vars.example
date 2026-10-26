@@ -1,0 +1,3 @@
+# A code you make up (8+ characters). The first time you open the site, it asks for this code
+# before letting you create the administrator sign-in. Keep it somewhere safe.
+SETUP_CODE=choose-a-setup-code

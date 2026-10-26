@@ -1,0 +1,19 @@
+{
+  "name": "steward",
+  "version": "0.2.0",
+  "description": "Church membership, attendance and contributions (a Shepherd's Staff replacement) on Cloudflare's free plan",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "create-user": "node scripts/create-user.mjs",
+    "test": "node test/smoke.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4.40.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

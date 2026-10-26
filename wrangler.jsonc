@@ -1,0 +1,23 @@
+{
+  // Steward runs as one Cloudflare Worker: it serves the app in /public and answers /api/* from a D1 database.
+  // The Worker creates its own tables on first use (src/schema.js), so no separate database setup step is needed.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "steward",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./public",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/healthz"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "steward",
+      // ⬇ Each Cloudflare account has its own database. Create one named "steward" in the dashboard
+      //   (Storage & Databases → D1 SQL Database → Create) and paste its Database ID here.
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "observability": { "enabled": true }
+}

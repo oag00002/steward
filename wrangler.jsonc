@@ -16,7 +16,7 @@
       "database_name": "steward",
       // ⬇ Each Cloudflare account has its own database. Create one named "steward" in the dashboard
       //   (Storage & Databases → D1 SQL Database → Create) and paste its Database ID here.
-      "database_id": "00000000-0000-0000-0000-000000000000"
+      "database_id": "bbf22b86-3096-41a0-9730-bc403982f04a"
     }
   ],
   "observability": { "enabled": true }

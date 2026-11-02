@@ -1,9 +1,9 @@
 // Keeps the app itself available when the signal drops mid-count.
 // Pages and scripts: network first, cached copy as fallback. API calls are never cached here
 // (the app keeps its own copy of the envelope list and unsent entries on the phone).
-const CACHE = 'steward-shell-v3';
+const CACHE = 'steward-shell-v4';
 const SHELL = ['/', '/index.html', '/css/app.css', '/js/app.js', '/js/ui.js', '/js/api.js', '/js/offerings.js',
-  '/js/people.js', '/js/attendance.js', '/js/reports.js', '/js/admin.js', '/js/csv.js', '/manifest.webmanifest', '/icon.svg'];
+  '/js/people.js', '/js/attendance.js', '/js/reports.js', '/js/admin.js', '/js/csv.js', '/js/nextyear.js', '/manifest.webmanifest', '/icon.svg'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

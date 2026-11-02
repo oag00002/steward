@@ -95,16 +95,16 @@ If a column isn't recognized, rename it in Excel and import the file again.
 **Everything at once.** Section 3, *Restore everything from a file*, which only administrators see, loads a whole database in one step. That includes households, people, envelopes, funds, every gift and all attendance history. It accepts a file converted from a Shepherd's Staff database (`.MDB`), or a *Full backup* from another copy of Steward. It only works while Steward has no records yet, so nothing can be overwritten.
 
 ### Year-end
-**Settings → Year-end** walks through it:
-1. Post every offering.
-2. Print statements (*Print or save as PDF* puts one letter on each page).
-3. Fill in next year's envelope numbers.
-4. Download the spreadsheet for the envelope company.
-5. Switch to the new numbers once the boxes are handed out.
+Next year's envelopes are planned separately from this year's records, so there's no going back and forth.
 
-Gifts are tied to the giver, not the number, so renumbering never changes history.
-
-Edit the church name, address, signer and letter wording under **Settings**. The default letter includes the IRS "no goods or services" sentence.
+1. **Plan next year** (Settings → Year-end → Plan next year), at any time in the fall:
+   - Steward suggests label changes from membership records. When one person on a shared envelope has died, it suggests printing it under the survivor; when both have, it suggests stopping it. One button applies them all.
+   - Givers with no gifts in two years are listed separately, for you to decide one at a time.
+   - Click **Fill in next year's numbers**, or type numbers in yourself. Add new givers for next year with only a next-year number.
+   - **Print box labels** (Avery 5160 or 5163), and download the **spreadsheet for the envelope company**.
+   None of this changes this year's names, numbers or statements.
+2. **Post every offering**, then **print statements**. Statements always use each giver's name as it stood that year, so they can be printed before or after the switch.
+3. **Switch** when the new boxes are in use, choosing the first offering date that uses the new numbers (usually January 1). Envelopes for anyone marked *stopping* are retired, and their gifts stay on record. Offerings dated before the switch date still find givers by last year's numbers, so a late December envelope counted in January goes to the right person.
 
 ### Backups
 - **Reports → Full backup** downloads everything as one file. Save one somewhere safe every month and after year-end.

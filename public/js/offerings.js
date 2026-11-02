@@ -56,6 +56,14 @@ const opt = {
 
 let ctx = null; // current batch screen state
 
+// Offerings dated before the envelope switch use last year's numbers (late December envelopes).
+const usesPriorNumbers = date => !!(state.settings.numbers_switched_on && date && date < state.settings.numbers_switched_on);
+function envMap(dir, date) {
+  const prior = usesPriorNumbers(date);
+  return new Map(dir.filter(d => (prior ? d.prior_envelope_no : d.envelope_no) != null)
+    .map(d => [prior ? d.prior_envelope_no : d.envelope_no, prior ? { ...d, display_name: d.prior_name || d.display_name } : d]));
+}
+
 export async function batch(id) {
   const v = $('#view');
   const [b, dir, funds] = await Promise.all([
@@ -63,7 +71,7 @@ export async function batch(id) {
     cachedGet('/contributors/directory', 'directory'),
     cachedGet('/funds', 'funds'),
   ]);
-  ctx = { id: String(id), b, dir, funds, byEnv: new Map(dir.filter(d => d.envelope_no != null).map(d => [d.envelope_no, d])) };
+  ctx = { id: String(id), b, dir, funds, byEnv: envMap(dir, b.batch_date) };
   const open = b.status === 'open';
   const activeFunds = funds.filter(f => f.active);
   const lastFund = cache.get('lastFund');
@@ -96,7 +104,7 @@ export async function batch(id) {
       <div class="opts">
         <label><input type="checkbox" id="o-chk" ${opt.showCheck ? raw('checked') : ''}> Record check numbers</label>
         <label><input type="checkbox" id="o-fund" ${opt.skipFund ? raw('checked') : ''}> Tab skips fund</label>
-        <span class="muted">Envelope 0 = loose offering</span>
+        <span class="muted">Envelope 0 = loose offering${usesPriorNumbers(b.batch_date) ? ` · Dated before ${fmtDate(state.settings.numbers_switched_on)}, so last year's envelope numbers apply` : ''}</span>
       </div>
     </form>` : ''}
 
@@ -185,7 +193,7 @@ async function refreshDirIfMissing(envInput, updateWho, quiet = false) {
     const dir = await get('/contributors/directory');
     cache.set('directory', dir);
     ctx.dir = dir;
-    ctx.byEnv = new Map(dir.filter(d => d.envelope_no != null).map(d => [d.envelope_no, d]));
+    ctx.byEnv = envMap(dir, ctx.b.batch_date);
     updateWho();
     if (!quiet && ctx.byEnv.has(Number(envInput.value))) $('#amt').focus();
   } catch { /* keep the local list */ }

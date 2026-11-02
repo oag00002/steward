@@ -43,15 +43,20 @@ export default function (r) {
     }
     const filter = where.length ? 'AND ' + where.join(' AND ') : '';
     const givers = await all(c.db, `
-      SELECT cv.id, cv.envelope_no, cv.prior_envelope_no, cv.display_name, cv.sort_name, cv.statement_method, cv.use_alt,
+      SELECT cv.id, cv.envelope_no, cv.prior_envelope_no, cv.display_name, cv.prior_name, cv.sort_name, cv.statement_method, cv.use_alt,
         cv.home_address1, cv.home_address2, cv.home_city, cv.home_state, cv.home_zip,
         cv.alt_address1, cv.alt_address2, cv.alt_city, cv.alt_state, cv.alt_zip, cv.mail_email
       FROM contributor_view cv
       WHERE EXISTS (SELECT 1 FROM offerings o JOIN batches b ON b.id = o.batch_id
         WHERE o.contributor_id = cv.id AND b.status = 'posted' AND b.batch_date BETWEEN ? AND ?) ${filter}`, from, to, ...params);
+    // A statement for a period that ended before the envelope switch uses each giver's name and
+    // number as they were then (so a 2025 statement still reads "John & Mary" after John's envelope changed).
+    const sw = (await first(c.db, `SELECT value FROM settings WHERE key = 'numbers_switched_on'`))?.value;
+    const usePrior = !!(sw && to < sw);
     const contributors = givers.map(x => {
       const a = mailAddress(x);
-      return { id: x.id, envelope_no: x.envelope_no, prior_envelope_no: x.prior_envelope_no, name: x.display_name, sort_name: x.sort_name,
+      return { id: x.id, envelope_no: usePrior ? x.prior_envelope_no : x.envelope_no, prior_envelope_no: x.prior_envelope_no,
+        name: (usePrior && x.prior_name) || x.display_name, sort_name: x.sort_name,
         statement_method: x.statement_method, email: x.mail_email, zip: a.zip, address: [a.address1, a.address2].filter(Boolean),
         city_line: [a.city && `${a.city},`, a.state, a.zip].filter(Boolean).join(' ') };
     });

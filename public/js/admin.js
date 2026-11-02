@@ -243,45 +243,53 @@ async function restoreFile(file, out) {
 // ---------------- Year-end ----------------
 export async function yearEnd() {
   const v = $('#view');
-  const [open, rows] = await Promise.all([get('/batches?status=open'), get('/contributors')]);
-  const active = rows.filter(r => r.active && r.uses_envelopes);
-  const planned = active.filter(r => r.upcoming_envelope_no);
-  const y = new Date().getMonth() < 3 ? new Date().getFullYear() - 1 : new Date().getFullYear();
+  const thisYear = new Date().getFullYear();
+  const [open, plan, thisYearBatches] = await Promise.all([get('/batches?status=open'), get('/contributors/next-year'), get(`/batches?year=${thisYear}`)]);
+  const rows = plan.rows;
+  const getting = rows.filter(r => !r.upcoming_skip && r.active);
+  const numbered = getting.filter(r => r.upcoming_envelope_no);
+  const stopping = rows.filter(r => r.upcoming_skip).length;
+  const renamed = rows.filter(r => r.upcoming_name && !r.upcoming_skip).length;
+  const ready = numbered.length + stopping + renamed > 0;
+  const switched = plan.numbers_switched_on;
+  // New numbers normally start January 1 of next year; if nothing has been given yet this year, this January 1.
+  const defaultStart = thisYearBatches.length ? `${thisYear + 1}-01-01` : `${thisYear}-01-01`;
+  const stmtYear = new Date().getMonth() < 3 ? thisYear - 1 : thisYear;
   v.innerHTML = html`
     <a class="back" href="#/settings">← Settings</a>
     <h1>Year-end</h1>
-    <div class="panel"><h2>1. Post every offering</h2>
+    <p class="muted">Plan next year's envelopes whenever you like; statements and this year's counting aren't affected until you switch.</p>
+
+    <div class="panel"><h2>1. Plan next year's envelopes</h2>
+      <p>${numbered.length} of ${getting.length} givers have a number for next year${stopping ? `, ${stopping} stopping` : ''}${renamed ? `, ${renamed} with a new name on the label` : ''}.</p>
+      <div class="row"><a class="btn primary" href="#/nextyear">Plan next year</a><a class="btn" href="#/labels">Print box labels</a></div></div>
+
+    <div class="panel"><h2>2. Post every offering</h2>
       ${open.length ? html`<p>${open.length} offering${open.length === 1 ? ' is' : 's are'} still in progress and won't appear on statements:</p>
         <ul>${open.map(b => html`<li><a href="#/batch/${b.id}">${fmtDate(b.batch_date)} — ${money(b.total_cents)}</a></li>`)}</ul>`
         : html`<p class="diff ok">Everything is posted.</p>`}</div>
-    <div class="panel"><h2>2. Print giving statements</h2>
-      <p>Statements cover January 1 through December 31 and are printed in envelope or name order.</p>
-      <a class="btn primary" href="#/statements?year=${y}">Prepare ${y} statements</a></div>
-    <div class="panel"><h2>3. Next year's envelope numbers</h2>
-      <p class="small">Give everyone their number for the new box of envelopes. Gifts stay with the giver, not the number, so history and statements are unaffected. Givers marked “keep this number” are skipped.</p>
-      <div class="fields">
-        ${selectField('Order', 'mode', [['alphabetical', 'Alphabetical by last name'], ['keep_order', 'Keep current order, close gaps']], 'alphabetical')}
-        ${field('Start numbering at', 'start', '1', 'inputmode="numeric"')}
-      </div>
-      <div class="row"><button class="primary" id="plan">Fill in next year's numbers</button>${planned.length ? html`<button id="clear">Clear them</button>` : ''}
-        <button type="button" id="envcsv">Spreadsheet for the envelope company</button></div>
-      ${planned.length ? html`<div class="tablewrap" style="margin-top:1rem;max-height:340px;overflow:auto"><table>
-        <thead><tr><th>Name</th><th class="num">Now</th><th class="num">Next year</th></tr></thead>
-        <tbody>${planned.sort((a, b) => a.upcoming_envelope_no - b.upcoming_envelope_no).map(r => html`<tr><td>${r.display_name}</td><td class="num">${r.envelope_no ?? ''}</td><td class="num"><strong>${r.upcoming_envelope_no}</strong></td></tr>`)}</tbody></table></div>` : ''}
-    </div>
-    <div class="panel"><h2>4. Switch to next year's numbers</h2>
-      <p class="small">Do this after the last offering of the year is entered and the new envelopes are handed out. Each giver's old number is kept as “last year's number.”</p>
-      <button class="danger" id="apply" ${planned.length ? '' : raw('disabled')}>Switch ${planned.length} envelopes to next year's numbers</button></div>`;
-  $('#plan').onclick = async () => {
-    if (planned.length && !(await confirmBox('Replace the next-year numbers already filled in?', { ok: 'Replace' }))) return;
-    try { const r = await post('/contributors/renumber', { mode: $('#f-mode').value, start: $('#f-start').value }); toast(`${r.count} numbered`); yearEnd(); } catch (ex) { toast(ex.message, true); }
-  };
-  $('#envcsv').onclick = () => downloadExport('contributors').catch(ex => toast(ex.message, true));
-  $('#clear')?.addEventListener('click', async () => { await post('/contributors/clear-upcoming'); yearEnd(); });
+
+    <div class="panel"><h2>3. Print giving statements</h2>
+      <p>Statements use each giver's name as it stood that year, so you can print them before or after the switch.</p>
+      <a class="btn primary" href="#/statements?year=${stmtYear}">Prepare ${stmtYear} statements</a></div>
+
+    <div class="panel"><h2>4. Switch to next year's envelopes</h2>
+      ${switched ? html`<p class="small">Last switched: offerings dated from <strong>${fmtDate(switched)}</strong> use the current numbers. Earlier offerings still use the previous year's.</p>` : ''}
+      <p class="small">Applies the plan: new numbers, new label names, and stops envelopes for givers marked <em>stopping</em>. Gifts stay with each giver. Offerings dated before the start date below keep using last year's numbers, so a late December envelope still finds the right person.</p>
+      <div class="fields"><div class="field"><label for="eff">New numbers start with offerings dated</label><input id="eff" type="date" value="${defaultStart}"></div></div>
+      <button class="danger" id="apply" ${ready ? '' : raw('disabled')}>Switch to next year's envelopes</button></div>`;
   $('#apply').onclick = async () => {
-    if (open.length && !(await confirmBox(`${open.length} offerings are still in progress. Switch numbers anyway?`, { ok: 'Continue' }))) return;
-    if (!(await confirmBox('Switch everyone to next year\'s envelope numbers now? Counters will need to use the new numbers from now on.', { ok: 'Switch numbers', danger: true }))) return;
-    try { const r = await post('/contributors/apply-upcoming'); cache.del('directory'); toast(`${r.count} envelopes switched`); yearEnd(); } catch (ex) { toast(ex.message, true); }
+    const eff = $('#eff').value;
+    if (!eff) return toast('Choose the first offering date that uses the new numbers.', true);
+    if (getting.length > numbered.length && !(await confirmBox(`${getting.length - numbered.length} givers have no next-year number and will keep their current one. Continue?`, { ok: 'Continue' }))) return;
+    if (!(await confirmBox(`Switch now? Offerings dated ${fmtDate(eff)} or later will use the new numbers.`, { ok: 'Switch', danger: true }))) return;
+    try {
+      const r = await post('/contributors/apply-upcoming', { effective_date: eff });
+      cache.del('directory');
+      await loadSettings();
+      toast(`${r.count} renumbered${r.dropped ? `, ${r.dropped} stopped` : ''}${r.renamed ? `, ${r.renamed} renamed` : ''}`);
+      yearEnd();
+    } catch (ex) { toast(ex.message, true); }
   };
 }
 

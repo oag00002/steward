@@ -137,7 +137,7 @@ function personModal(p, done) {
 }
 
 // ---------------- Envelope (contributor) form ----------------
-async function contributorModal(c, hh, done) {
+export async function contributorModal(c, hh, done) {
   const isNew = !c.id;
   const next = await get('/contributors/next-envelope');
   let householdPeople = hh?.people || [];
@@ -167,6 +167,8 @@ async function contributorModal(c, hh, done) {
         <div class="field"><label for="c-env">Envelope number</label><input id="c-env" name="envelope_no" inputmode="numeric" value="${c.envelope_no ?? (isNew ? next.next_available : '')}"></div>
         <div class="field"><label>&nbsp;</label><div class="row"><button type="button" data-n="${next.next_available}">Lowest free (${next.next_available})</button><button type="button" data-n="${next.next_highest}">Next (${next.next_highest})</button></div></div>
       </div>
+      ${field("Next year's number (optional)", 'upcoming_envelope_no', c.upcoming_envelope_no, 'inputmode="numeric" placeholder="Filled in at year-end"')}
+      <p class="small muted" style="margin-top:-.4rem">New giver starting next year? Leave <em>Envelope number</em> blank and fill in only next year's number.</p>
       ${field('Name on statements (optional)', 'custom_name', c.custom_name, 'placeholder="Leave blank to use their names"')}
       ${selectField('Send year-end statement by', 'statement_method', [['mail', 'Mail'], ['email', 'Email'], ['none', "Don't send"]], c.statement_method || 'mail')}
       ${checkField('Uses physical envelopes (unchecked gives a number from 100000 up)', 'uses_envelopes', c.uses_envelopes !== false)}

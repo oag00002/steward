@@ -212,6 +212,16 @@ INSERT INTO settings (key, value) VALUES
   ('signer_name', ''),
   ('signer_title', 'Financial Secretary');
 `,
+
+  // 2 — next-year envelope plan, kept apart from this year's records
+  `
+-- Name to print on next year's envelopes (blank = same as now).
+ALTER TABLE contributors ADD COLUMN upcoming_name TEXT;
+-- 1 = this giver gets no envelopes next year (deceased, moved away…). Applied at the switch.
+ALTER TABLE contributors ADD COLUMN upcoming_skip INTEGER NOT NULL DEFAULT 0;
+-- The name as it stood when the numbers were switched, so last year's statements still read correctly.
+ALTER TABLE contributors ADD COLUMN prior_name TEXT;
+`,
 ];
 
 export const splitStatements = sql => sql.split(/;\s*\n/).map(s => s.replace(/^\s*--.*$/gm, '').trim()).filter(Boolean);

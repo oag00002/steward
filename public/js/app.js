@@ -6,6 +6,7 @@ import * as people from './people.js';
 import * as attendance from './attendance.js';
 import * as reports from './reports.js';
 import * as admin from './admin.js';
+import * as nextyear from './nextyear.js';
 
 export const state = { user: null, settings: {}, setup: null };
 export const isFinance = () => state.user && state.user.role !== 'counter';
@@ -50,6 +51,8 @@ const ROUTES = [
   [/^settings$/, () => admin.settings()],
   [/^import$/, () => admin.importPage()],
   [/^yearend$/, () => admin.yearEnd()],
+  [/^nextyear$/, () => nextyear.nextYear()],
+  [/^labels$/, () => nextyear.labels()],
   [/^more$/, () => more()],
 ];
 
@@ -60,7 +63,7 @@ export const go = path => { location.hash = '#/' + path; };
 function shell() {
   const r = route();
   const top = r.split('/')[0];
-  const current = { batch: 'offerings', household: 'people', envelope: 'envelopes', statements: 'reports', report: 'reports', import: 'settings', yearend: 'settings' }[top] ?? top;
+  const current = { batch: 'offerings', household: 'people', envelope: 'envelopes', statements: 'reports', report: 'reports', import: 'settings', yearend: 'settings', nextyear: 'settings', labels: 'settings' }[top] ?? top;
   const items = navItems();
   const bottom = isFinance()
     ? [items[0], items[1], items[2], items[3], ['more', 'More', 'more']]
@@ -94,6 +97,7 @@ window.addEventListener('steward:signedout', () => { if (state.user) { state.use
 
 export async function render() {
   const app = $('#app');
+  document.getElementById('page-style')?.remove(); // page-specific print settings (label sheets)
   if (!state.user) return state.setup ? setupView(app) : loginView(app);
   app.innerHTML = shell();
   updateSync();

@@ -1,5 +1,5 @@
 // Funds, contributors (envelopes) and offering batches.
-import { HttpError, bad, notFound, blank, dateOrNull, intOrNull, parseCents, all, first, run, stmt, batch, isUnique, audit, thisYear, yearBounds } from '../lib.js';
+import { HttpError, bad, notFound, blank, dateOrNull, intOrNull, parseCents, all, first, run, stmt, batch, isUnique, audit, thisYear, yearBounds, mailAddress } from '../lib.js';
 import { RANK } from '../auth.js';
 
 export const OTHER_ENVELOPE_START = 100000; // numbers for givers who don't use physical envelopes
@@ -95,7 +95,7 @@ async function validateContributor(db, body, id = null) {
   return c;
 }
 
-async function resolveLine(db, body) {
+async function resolveLine(db, body, batchDate) {
   const amount = parseCents(body.amount ?? (body.amount_cents != null ? body.amount_cents / 100 : null));
   if (!amount) throw bad('Enter an amount.');
   if (Math.abs(amount) > 100000000) throw bad('That amount looks too large.');
@@ -106,7 +106,9 @@ async function resolveLine(db, body) {
     if (!(await first(db, 'SELECT id FROM contributors WHERE id = ?', contributorId))) throw bad('That envelope no longer exists.');
   } else if (blank(body.envelope_no)) {
     const env = intOrNull(body.envelope_no);
-    const hit = await first(db, 'SELECT id FROM contributors WHERE envelope_no = ?', env);
+    const sw = await first(db, `SELECT value FROM settings WHERE key = 'numbers_switched_on'`);
+    const col = sw?.value && batchDate && batchDate < sw.value ? 'prior_envelope_no' : 'envelope_no';
+    const hit = await first(db, `SELECT id FROM contributors WHERE ${col} = ?`, env);
     if (!hit) throw bad(`There is no envelope #${env}.`);
     contributorId = hit.id;
   } else throw bad('Enter an envelope number (or mark it as loose offering).');
@@ -144,7 +146,7 @@ export default function (r) {
   // ---------------- Contributors / envelopes ----------------
   // Envelope -> name list for fast lookups while counting (cached on the phone).
   r.get('/api/contributors/directory', 'counter', c => all(c.db,
-    'SELECT id, envelope_no, display_name, sort_name, active FROM contributor_view ORDER BY envelope_no IS NULL, envelope_no, sort_name'));
+    'SELECT id, envelope_no, prior_envelope_no, display_name, prior_name, sort_name, active FROM contributor_view ORDER BY envelope_no IS NULL, envelope_no, sort_name'));
 
   r.get('/api/contributors', 'finance', async c => {
     const [from, to] = yearBounds(intOrNull(c.query.get('year')) || thisYear());
@@ -160,6 +162,31 @@ export default function (r) {
   });
 
   r.get('/api/contributors/next-envelope', 'finance', async c => ({ next_available: await nextAvailable(c.db), next_highest: await nextHighest(c.db) }));
+
+  r.get('/api/contributors/next-year', 'finance', async c => {
+    const rows = await all(c.db, `
+      SELECT cv.id, cv.envelope_no, cv.upcoming_envelope_no, cv.display_name, cv.sort_name, cv.upcoming_name, cv.upcoming_skip, cv.household_id,
+        cv.skip_renumber, cv.uses_envelopes, cv.active, cv.is_other_giver, cv.statement_method,
+        cv.use_alt, cv.home_address1, cv.home_address2, cv.home_city, cv.home_state, cv.home_zip,
+        cv.alt_address1, cv.alt_address2, cv.alt_city, cv.alt_state, cv.alt_zip,
+        p1.first_name AS p1_first, p1.last_name AS p1_last, p1.status AS p1_status, p1.death_date AS p1_death,
+        p2.first_name AS p2_first, p2.last_name AS p2_last, p2.status AS p2_status, p2.death_date AS p2_death,
+        (SELECT MAX(b.batch_date) FROM offerings o JOIN batches b ON b.id = o.batch_id WHERE o.contributor_id = cv.id) AS last_gift
+      FROM contributor_view cv
+      LEFT JOIN people p1 ON p1.id = cv.person_id
+      LEFT JOIN people p2 ON p2.id = cv.joint_person_id
+      WHERE cv.active = 1 OR cv.upcoming_envelope_no IS NOT NULL
+      ORDER BY cv.upcoming_envelope_no IS NULL, cv.upcoming_envelope_no, cv.sort_name COLLATE NOCASE`);
+    for (const r of rows) {
+      const a = mailAddress(r);
+      r.address = [a.address1, a.address2].filter(Boolean);
+      r.city_line = [a.city && `${a.city},`, a.state, a.zip].filter(Boolean).join(' ');
+      Object.assign(r, { city: a.city, state: a.state, zip: a.zip });
+      for (const k of ['use_alt', 'home_address1', 'home_address2', 'home_city', 'home_state', 'home_zip', 'alt_address1', 'alt_address2', 'alt_city', 'alt_state', 'alt_zip']) delete r[k];
+    }
+    const switched = await first(c.db, `SELECT value FROM settings WHERE key = 'numbers_switched_on'`);
+    return { rows, numbers_switched_on: switched?.value || null };
+  });
 
   r.get('/api/contributors/:id', 'finance', async c => {
     const row = await first(c.db, 'SELECT * FROM contributor_view WHERE id = ?', c.params.id);
@@ -209,7 +236,8 @@ export default function (r) {
     const body = await c.body();
     const start = intOrNull(body.start) || 1;
     const mode = body.mode === 'alphabetical' ? 'alphabetical' : 'keep_order';
-    const rows = await all(c.db, `SELECT id, envelope_no, skip_renumber FROM contributor_view WHERE active = 1 AND uses_envelopes = 1
+    await run(c.db, 'UPDATE contributors SET upcoming_envelope_no = NULL WHERE upcoming_skip = 1');
+    const rows = await all(c.db, `SELECT id, envelope_no, skip_renumber FROM contributor_view WHERE active = 1 AND uses_envelopes = 1 AND upcoming_skip = 0
       ORDER BY ${mode === 'alphabetical' ? 'sort_name COLLATE NOCASE, envelope_no' : 'envelope_no IS NULL, envelope_no, sort_name COLLATE NOCASE'}`);
     const reserved = new Set(rows.filter(x => x.skip_renumber && x.envelope_no).map(x => x.envelope_no));
     let n = start;
@@ -228,26 +256,77 @@ export default function (r) {
   });
 
   r.post('/api/contributors/clear-upcoming', 'finance', async c => {
-    await run(c.db, 'UPDATE contributors SET upcoming_envelope_no = NULL');
+    await run(c.db, 'UPDATE contributors SET upcoming_envelope_no = NULL, upcoming_name = NULL, upcoming_skip = 0');
     await audit(c, 'envelope_clear_upcoming', '');
     return { ok: true };
   });
 
-  // Year-end: make next year's numbers current. Old numbers are kept as prior_envelope_no.
+  // ---------- Next year's envelopes (planned without touching this year's records) ----------
+  // Save one giver's plan for next year. Body: any of { upcoming_envelope_no, upcoming_name, upcoming_skip }.
+  r.put('/api/contributors/:id/next', 'finance', async c => {
+    const body = await c.body();
+    const row = await first(c.db, 'SELECT * FROM contributors WHERE id = ?', c.params.id);
+    if (!row) throw notFound('Envelope');
+    const num = 'upcoming_envelope_no' in body ? intOrNull(body.upcoming_envelope_no) : row.upcoming_envelope_no;
+    if (num !== null && num <= 0) throw bad('Envelope numbers must be 1 or more.');
+    const skip = 'upcoming_skip' in body ? (body.upcoming_skip ? 1 : 0) : row.upcoming_skip;
+    const name = 'upcoming_name' in body ? blank(body.upcoming_name) : row.upcoming_name;
+    if (num !== null && !skip) {
+      const taken = await first(c.db, 'SELECT id FROM contributor_view WHERE upcoming_envelope_no = ? AND upcoming_skip = 0 AND id <> ?', num, row.id);
+      if (taken) throw bad(`Next year's number ${num} is already planned for someone else.`);
+    }
+    await run(c.db, 'UPDATE contributors SET upcoming_envelope_no = ?, upcoming_name = ?, upcoming_skip = ? WHERE id = ?', skip ? null : num, name, skip, row.id);
+    return first(c.db, 'SELECT id, upcoming_envelope_no, upcoming_name, upcoming_skip FROM contributors WHERE id = ?', row.id);
+  });
+
+  // Save many plans at once (the "apply suggestions" button). Body: { changes: [{ id, upcoming_name?, upcoming_skip? }] }
+  r.post('/api/contributors/next/bulk', 'finance', async c => {
+    const changes = ((await c.body()).changes || []).filter(x => Number.isInteger(x?.id)).slice(0, 5000);
+    if (!changes.length) return { ok: true, count: 0 };
+    const json = JSON.stringify(changes.map(x => ({ id: x.id, name: 'upcoming_name' in x ? blank(x.upcoming_name) : undefined, skip: 'upcoming_skip' in x ? (x.upcoming_skip ? 1 : 0) : undefined })));
+    await batch(c.db, [
+      stmt(c.db, `UPDATE contributors SET upcoming_name = (SELECT json_extract(j.value, '$.name') FROM json_each(?1) j WHERE json_extract(j.value, '$.id') = contributors.id)
+        WHERE id IN (SELECT json_extract(value, '$.id') FROM json_each(?1) WHERE json_type(value, '$.name') IS NOT NULL)`, json),
+      stmt(c.db, `UPDATE contributors SET upcoming_skip = (SELECT json_extract(j.value, '$.skip') FROM json_each(?1) j WHERE json_extract(j.value, '$.id') = contributors.id)
+        WHERE id IN (SELECT json_extract(value, '$.id') FROM json_each(?1) WHERE json_type(value, '$.skip') IS NOT NULL)`, json),
+      stmt(c.db, 'UPDATE contributors SET upcoming_envelope_no = NULL WHERE upcoming_skip = 1'),
+    ]);
+    await audit(c, 'envelope_plan_bulk', `${changes.length} envelopes`);
+    return { ok: true, count: changes.length };
+  });
+
+  // The switch: next year's plan becomes current. Everyone's name and number as of today are kept as
+  // "last year's", and gifts dated before the effective date keep using them (late envelopes, statements).
   r.post('/api/contributors/apply-upcoming', 'finance', async c => {
-    const dupes = await all(c.db, `SELECT upcoming_envelope_no AS n FROM contributors WHERE upcoming_envelope_no IS NOT NULL
+    const body = await c.body();
+    const effective = dateOrNull(body.effective_date);
+    if (!effective) throw bad('Choose the first offering date that uses the new numbers.');
+    const dupes = await all(c.db, `SELECT upcoming_envelope_no AS n FROM contributors WHERE upcoming_envelope_no IS NOT NULL AND upcoming_skip = 0
       GROUP BY upcoming_envelope_no HAVING count(*) > 1`);
     if (dupes.length) throw bad(`Next year's numbers have duplicates: ${dupes.map(d => d.n).join(', ')}`);
-    const clash = await all(c.db, `SELECT envelope_no AS n FROM contributors WHERE upcoming_envelope_no IS NULL AND envelope_no IN
-      (SELECT upcoming_envelope_no FROM contributors WHERE upcoming_envelope_no IS NOT NULL)`);
+    const clash = await all(c.db, `SELECT envelope_no AS n FROM contributors WHERE upcoming_envelope_no IS NULL AND upcoming_skip = 0 AND active = 1 AND envelope_no IN
+      (SELECT upcoming_envelope_no FROM contributors WHERE upcoming_envelope_no IS NOT NULL AND upcoming_skip = 0)`);
     if (clash.length) throw bad(`These numbers would be used twice (a giver without a next-year number still holds them): ${clash.map(d => d.n).join(', ')}`);
-    const count = (await first(c.db, 'SELECT count(*) AS n FROM contributors WHERE upcoming_envelope_no IS NOT NULL')).n;
+    const counts = await first(c.db, `SELECT sum(upcoming_envelope_no IS NOT NULL AND upcoming_skip = 0) AS renumbered, sum(upcoming_skip) AS dropped,
+      sum(upcoming_name IS NOT NULL AND upcoming_skip = 0) AS renamed FROM contributors`);
     await batch(c.db, [
-      stmt(c.db, 'UPDATE contributors SET prior_envelope_no = envelope_no, envelope_no = NULL WHERE upcoming_envelope_no IS NOT NULL'),
+      // Remember everyone's name and number as they stand now.
+      stmt(c.db, `UPDATE contributors SET prior_envelope_no = envelope_no,
+        prior_name = (SELECT display_name FROM contributor_view v WHERE v.id = contributors.id)`),
+      // Givers who get no envelopes next year: release their number and set them inactive (their history stays).
+      stmt(c.db, `UPDATE contributors SET envelope_no = NULL, active = 0, upcoming_envelope_no = NULL, upcoming_name = NULL, upcoming_skip = 0
+        WHERE upcoming_skip = 1`),
+      // Inactive envelopes without a plan for next year give their number back (history stays).
+      stmt(c.db, 'UPDATE contributors SET envelope_no = NULL WHERE active = 0 AND upcoming_envelope_no IS NULL'),
+      // New numbers (two steps so swapping numbers never collides).
+      stmt(c.db, 'UPDATE contributors SET envelope_no = NULL WHERE upcoming_envelope_no IS NOT NULL'),
       stmt(c.db, 'UPDATE contributors SET envelope_no = upcoming_envelope_no, upcoming_envelope_no = NULL WHERE upcoming_envelope_no IS NOT NULL'),
+      // New label names become the name on the envelope and next year's statements.
+      stmt(c.db, 'UPDATE contributors SET custom_name = upcoming_name, upcoming_name = NULL WHERE upcoming_name IS NOT NULL'),
+      stmt(c.db, `INSERT INTO settings (key, value) VALUES ('numbers_switched_on', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`, effective),
     ]);
-    await audit(c, 'envelope_apply_upcoming', `${count} envelopes`);
-    return { ok: true, count };
+    await audit(c, 'envelope_apply_upcoming', `effective ${effective}: ${counts.renumbered} renumbered, ${counts.dropped} dropped, ${counts.renamed} renamed`);
+    return { ok: true, count: counts.renumbered || 0, dropped: counts.dropped || 0, renamed: counts.renamed || 0, effective_date: effective };
   });
 
   // ---------------- Batches ----------------
@@ -312,7 +391,7 @@ export default function (r) {
       if (existing) return { id: existing.id, duplicate: true };
     }
     if (b.status !== 'open') throw bad('This batch has been posted, so lines cannot be added.');
-    const l = await resolveLine(c.db, body);
+    const l = await resolveLine(c.db, body, b.batch_date);
     try {
       const m = await run(c.db, `INSERT INTO offerings (batch_id, contributor_id, fund_id, amount_cents, check_no, memo, client_id, entered_by)
         VALUES (?,?,?,?,?,?,?,?)`, b.id, l.contributor_id, l.fund_id, l.amount_cents, l.check_no, l.memo, clientId, c.user.id);
@@ -329,7 +408,7 @@ export default function (r) {
   r.put('/api/batches/:id/lines/:lineId', 'counter', async c => {
     const b = await loadBatch(c, c.params.id);
     if (b.status !== 'open') throw bad('This batch is posted. Reopen it first to make changes.');
-    const l = await resolveLine(c.db, await c.body());
+    const l = await resolveLine(c.db, await c.body(), b.batch_date);
     const m = await run(c.db, `UPDATE offerings SET contributor_id=?, fund_id=?, amount_cents=?, check_no=?, memo=? WHERE id=? AND batch_id=?`,
       l.contributor_id, l.fund_id, l.amount_cents, l.check_no, l.memo, c.params.lineId, b.id);
     if (!m.changes) throw notFound('Line');

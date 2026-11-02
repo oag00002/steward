@@ -115,7 +115,7 @@ H2,Ann,Jones${tag},Head,2 Oak Ave,Morgantown,WV,26505,${tag % 900 + 2},`;
   await api('POST', '/contributors/renumber', { mode: 'alphabetical', start: 1 });
   const list = await api('GET', '/contributors');
   assert(list.filter(c => c.uses_envelopes && c.active).every(c => c.upcoming_envelope_no), 'upcoming numbers assigned');
-  await api('POST', '/contributors/apply-upcoming', {});
+  await api('POST', '/contributors/apply-upcoming', { effective_date: '2026-01-01' });
   const after = group(await api('GET', `/statements?from=2026-01-01&to=2026-12-31&contributor_id=${smith.id}`)).statements[0];
   assert(after.total_cents === s.total_cents && after.prior_envelope_no === smith.envelope_no, 'history survives renumbering');
 

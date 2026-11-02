@@ -92,6 +92,8 @@ Go to **Settings → Import** and pick a CSV file. Before anything is saved, Ste
 
 If a column isn't recognized, rename it in Excel and import the file again.
 
+**Everything at once.** Section 3, *Restore everything from a file*, which only administrators see, loads a whole database in one step. That includes households, people, envelopes, funds, every gift and all attendance history. It accepts a file converted from a Shepherd's Staff database (`.MDB`), or a *Full backup* from another copy of Steward. It only works while Steward has no records yet, so nothing can be overwritten.
+
 ### Year-end
 **Settings → Year-end** walks through it:
 1. Post every offering.
@@ -110,9 +112,9 @@ Edit the church name, address, signer and letter wording under **Settings**. The
   `npx wrangler d1 time-travel restore steward --timestamp=2026-11-01T14:00:00-05:00`
 
 ### Moving to a different Cloudflare account later
-1. Set up a new copy using the steps above.
-2. In the old copy, download a **Full backup**.
-3. Ask whoever maintains the code to load it into the new copy, or use `wrangler d1 export` and `wrangler d1 execute --file` (see *For developers*).
+1. In the old copy, download **Reports → Full backup**.
+2. Set up the new copy using the steps above and create its administrator.
+3. In the new copy, go to **Settings → Import → Restore everything from a file** and choose the backup.
 
 ### Locked out
 If no administrator can sign in, someone with access to the Cloudflare account can reset a password from a computer with [Node.js](https://nodejs.org) 22 or newer:

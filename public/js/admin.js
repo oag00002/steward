@@ -1,7 +1,7 @@
 // Settings, funds, users, imports and year-end tools.
 import { html, raw, $, $$, money, fmtDate, toast, modal, confirmBox, formData, field, selectField, checkField } from './ui.js';
 import { get, post, put, cache } from './api.js';
-import { parseCsv, canonicalRows, downloadExport } from './csv.js';
+import { parseCsv, canonicalRows, downloadExport, readRestoreFile, restorePieces } from './csv.js';
 import { state, isFinance, isAdmin, go, loadSettings } from './app.js';
 
 export async function settings() {
@@ -114,7 +114,11 @@ export function importPage() {
       <div class="fields"><div class="field"><label for="od">Label for these offerings</label><input id="od" value="Imported from Shepherd's Staff"></div></div>
       <label class="check"><input type="checkbox" id="opost" checked> Post them right away (they were already checked in the old system)</label>
       <input type="file" id="of" accept=".csv,text/csv">
-      <div id="ores"></div></div>`;
+      <div id="ores"></div></div>
+    ${isAdmin() ? html`<div class="panel"><h2>3. Restore everything from a file</h2>
+      <p class="small">Loads a whole church at once: households, people, envelopes, funds, every gift and all attendance history. Use it for a file converted from Shepherd's Staff, or a <em>Full backup</em> from another copy of Steward. It only works while this Steward has no records yet, so nothing can be overwritten. Sign-ins are kept as they are.</p>
+      <input type="file" id="rf" accept=".json,application/json">
+      <div id="rres"></div></div>` : ''}`;
 
   const run = async (kind, file, out, extra) => {
     out.innerHTML = html`<p class="muted" style="margin-top:1rem">Reading ${file.name}…</p>`;
@@ -173,8 +177,67 @@ export function importPage() {
     };
     try { show(await send(true)); } catch (ex) { out.innerHTML = html`<div class="error-box">${ex.message}</div>`; }
   };
+  $('#rf')?.addEventListener('change', e => e.target.files[0] && restoreFile(e.target.files[0], $('#rres')));
   $('#mf').onchange = e => e.target.files[0] && run('membership', e.target.files[0], $('#mres'), () => ({}));
   $('#of').onchange = e => e.target.files[0] && run('offerings', e.target.files[0], $('#ores'), () => ({ description: $('#od').value, post: $('#opost').checked }));
+}
+
+const TABLE_LABEL = { households: 'households', people: 'people', funds: 'funds', events: 'events', contributors: 'envelopes',
+  batches: 'offering dates', offerings: 'gifts', attendance_sessions: 'services', attendance_records: 'attendance marks', settings: 'settings' };
+
+async function restoreFile(file, out) {
+  out.innerHTML = html`<p class="muted" style="margin-top:1rem">Reading ${file.name}…</p>`;
+  let parsed, status;
+  try {
+    parsed = readRestoreFile(await file.text());
+    status = await get('/restore/status');
+  } catch (ex) { out.innerHTML = html`<div class="error-box" style="margin-top:1rem">${ex.message}</div>`; return; }
+  const t = parsed.tables;
+  const count = k => t[k]?.rows.length || 0;
+  const giftTotal = t.offerings ? t.offerings.rows.reduce((a, r) => a + (Number(r[t.offerings.columns.indexOf('amount_cents')]) || 0), 0) : 0;
+  const dates = t.batches ? t.batches.rows.map(r => r[t.batches.columns.indexOf('batch_date')]).filter(Boolean).sort() : [];
+  const blocked = !status.empty && !status.in_progress;
+  out.innerHTML = html`<div style="margin-top:1rem">
+    ${parsed.source ? html`<p class="small muted">From ${parsed.source}</p>` : ''}
+    <table><tbody>
+      ${['households', 'people', 'contributors', 'funds', 'offerings', 'attendance_records'].filter(count).map(k => html`<tr><td>${TABLE_LABEL[k][0].toUpperCase() + TABLE_LABEL[k].slice(1)}</td><td class="num">${count(k).toLocaleString()}</td></tr>`)}
+      ${giftTotal ? html`<tr><td>Gifts total${dates.length ? ` (${fmtDate(dates[0])} – ${fmtDate(dates.at(-1))})` : ''}</td><td class="num">${money(giftTotal)}</td></tr>` : ''}
+    </tbody></table>
+    ${parsed.notes.length ? html`<div class="note"><ul style="margin:0;padding-left:1.1rem">${parsed.notes.map(n => html`<li>${n}</li>`)}</ul></div>` : ''}
+    ${blocked ? html`<div class="error-box">This Steward already has records, so a restore can't be done here. A restore only goes into a brand-new, empty Steward.</div>`
+      : html`<button class="primary" id="restore-go">Restore now</button> ${status.in_progress ? html`<span class="small muted">An earlier restore didn't finish; this starts it over.</span>` : ''}`}
+    <div id="restore-progress"></div></div>`;
+  $('#restore-go')?.addEventListener('click', async e => {
+    if (!(await confirmBox(`Load ${count('people').toLocaleString()} people and ${count('offerings').toLocaleString()} gifts into this Steward?`, { ok: 'Restore' }))) return;
+    e.target.disabled = true;
+    const prog = $('#restore-progress');
+    const pieces = restorePieces(t);
+    const total = pieces.reduce((a, p) => a + p.n, 0);
+    let done = 0;
+    const show = label => { prog.innerHTML = html`<p style="margin-top:.8rem"><strong>${Math.floor((done / total) * 100)}%</strong> <span class="muted">${label}</span></p>`; };
+    try {
+      show('Starting…');
+      await post('/restore/start');
+      for (const p of pieces) {
+        show(`Loading ${TABLE_LABEL[p.table] || p.table}…`);
+        await post('/restore/chunk', { table: p.table, columns: p.columns, rows_json: p.rows_json });
+        done += p.n;
+      }
+      show('Finishing…');
+      const r = await post('/restore/finish');
+      ['directory', 'people', 'funds', 'events'].forEach(k => cache.del(k));
+      await loadSettings();
+      prog.innerHTML = html`<div class="note" style="margin-top:.8rem"><strong>Restored.</strong> ${r.counts.households} households, ${r.counts.people} people, ${r.counts.contributors} envelopes, ${r.counts.offerings.toLocaleString()} gifts, ${r.counts.attendance_records.toLocaleString()} attendance marks.
+        <br><a href="#/envelopes">See envelopes</a> · <a href="#/settings">Check church settings</a></div>`;
+      $('#rf').value = '';
+    } catch (ex) {
+      prog.innerHTML = html`<div class="error-box" style="margin-top:.8rem">The restore stopped: ${ex.message}</div>
+        <button id="restore-undo">Undo the partial restore</button> <span class="small muted">Then choose the file again.</span>`;
+      $('#restore-undo').onclick = async () => {
+        try { await post('/restore/abort'); toast('Partial restore removed'); out.innerHTML = ''; $('#rf').value = ''; } catch (x) { toast(x.message, true); }
+      };
+    }
+  });
 }
 
 // ---------------- Year-end ----------------

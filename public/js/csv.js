@@ -122,3 +122,39 @@ export async function downloadBackup() {
   for (const t of BACKUP_TABLES) out.tables[t] = await fetchExport(`table/${t}`);
   saveFile(`steward-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(out), 'application/json');
 }
+
+// ---------- Restore a whole file (Full backup, or converted from Shepherd's Staff) ----------
+export const RESTORE_ORDER = ['settings', 'households', 'people', 'funds', 'events', 'contributors', 'batches', 'offerings', 'attendance_sessions', 'attendance_records'];
+
+// Accepts { tables: { name: [ {row}, … ] } } (Full backup) or { tables: { name: { columns, rows: [[…]] } } }.
+// Returns { name: { columns, rows } } for the tables we know, in load order.
+export function readRestoreFile(text) {
+  let data;
+  try { data = JSON.parse(text); } catch { throw new Error('That file is not a Steward backup (it could not be read).'); }
+  if (!data || typeof data.tables !== 'object' || data.app !== 'steward') throw new Error('That file is not a Steward backup.');
+  const out = {};
+  for (const t of RESTORE_ORDER) {
+    const v = data.tables[t];
+    if (!v) continue;
+    if (Array.isArray(v)) {
+      const columns = [...new Set(v.flatMap(r => Object.keys(r)))];
+      out[t] = { columns, rows: v.map(r => columns.map(c => r[c] ?? null)) };
+    } else if (Array.isArray(v.columns) && Array.isArray(v.rows)) out[t] = { columns: v.columns, rows: v.rows };
+  }
+  return { tables: out, source: data.source || null, notes: data.notes || [] };
+}
+
+// Split each table into pieces of at most ~maxBytes of JSON.
+export function restorePieces(tables, maxBytes = 600_000) {
+  const pieces = [];
+  for (const [table, { columns, rows }] of Object.entries(tables)) {
+    let cur = [], size = 2;
+    for (const r of rows) {
+      const s = JSON.stringify(r);
+      if (cur.length && size + s.length + 1 > maxBytes) { pieces.push({ table, columns, rows_json: `[${cur.join(',')}]`, n: cur.length }); cur = []; size = 2; }
+      cur.push(s); size += s.length + 1;
+    }
+    if (cur.length) pieces.push({ table, columns, rows_json: `[${cur.join(',')}]`, n: cur.length });
+  }
+  return pieces;
+}

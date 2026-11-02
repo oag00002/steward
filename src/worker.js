@@ -8,6 +8,7 @@ import attendance from './routes/attendance.js';
 import reports from './routes/reports.js';
 import imports from './routes/imports.js';
 import admin from './routes/admin.js';
+import restore from './routes/restore.js';
 import { MIGRATIONS, splitStatements } from './schema.js';
 
 class Router {
@@ -64,7 +65,7 @@ function ensureSchema(db) {
 
 const router = new Router();
 registerAuth(router);
-for (const mod of [membership, contributions, attendance, reports, imports, admin]) mod(router);
+for (const mod of [membership, contributions, attendance, reports, imports, admin, restore]) mod(router);
 
 const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
